@@ -9,6 +9,7 @@ import Foundation
 import MeshtasticProtobufs
 import CocoaMQTT
 import OSLog
+import UserNotifications
 
 extension AccessoryManager {
 
