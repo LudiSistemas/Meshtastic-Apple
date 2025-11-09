@@ -130,6 +130,25 @@ struct MessageContextMenuItems: View {
 			}
 		}
 
+		// Trace Route - only show for messages from other users
+		if !isCurrentUser, let nodeNum = message.fromUser?.num {
+			Button {
+				Task {
+					do {
+						try await accessoryManager.sendTraceRouteRequest(
+							destNum: nodeNum,
+							wantResponse: true
+						)
+					} catch {
+						Logger.mesh.warning("Failed to send traceroute request: \(error)")
+					}
+				}
+			} label: {
+				Text("Trace Route")
+				Image(systemName: "signpost.right.and.left")
+			}
+		}
+
 		Divider()
 
 		Button(role: .destructive) {
