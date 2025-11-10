@@ -418,6 +418,43 @@ struct TraceRouteMapView: View {
 	@State private var mapStyle: MapStyle = MapStyle.standard(elevation: .realistic, emphasis: MapStyle.StandardEmphasis.muted, pointsOfInterest: .all, showsTraffic: false)
 	@State private var position = MapCameraPosition.automatic
 	@State private var animationPhase = false
+	@Environment(\.colorScheme) var colorScheme
+
+	// Computed property to get all coordinates for map bounds
+	private var allCoordinates: [CLLocationCoordinate2D] {
+		guard let hops = traceRoute.hops?.array as? [TraceRouteHopEntity] else { return [] }
+		return hops.compactMap { $0.coordinate }
+	}
+
+	// Calculate region that encompasses all hops
+	private var mapRegion: MKCoordinateRegion? {
+		let coords = allCoordinates
+		guard !coords.isEmpty else { return nil }
+
+		var minLat = coords[0].latitude
+		var maxLat = coords[0].latitude
+		var minLon = coords[0].longitude
+		var maxLon = coords[0].longitude
+
+		for coord in coords {
+			minLat = min(minLat, coord.latitude)
+			maxLat = max(maxLat, coord.latitude)
+			minLon = min(minLon, coord.longitude)
+			maxLon = max(maxLon, coord.longitude)
+		}
+
+		let center = CLLocationCoordinate2D(
+			latitude: (minLat + maxLat) / 2,
+			longitude: (minLon + maxLon) / 2
+		)
+
+		let span = MKCoordinateSpan(
+			latitudeDelta: max((maxLat - minLat) * 1.5, 0.01), // Add 50% padding
+			longitudeDelta: max((maxLon - minLon) * 1.5, 0.01)
+		)
+
+		return MKCoordinateRegion(center: center, span: span)
+	}
 
 	var body: some View {
 		VStack {
@@ -503,13 +540,16 @@ struct TraceRouteMapView: View {
 										VStack(spacing: 2) {
 											Text(hop.name ?? "Node \(hop.num.toHex())")
 												.font(.caption2)
+												.fontWeight(.semibold)
+												.foregroundColor(colorScheme == .dark ? .white : .black)
 												.padding(4)
-												.background(Color.white.opacity(0.9))
+												.background(colorScheme == .dark ? Color.black.opacity(0.8) : Color.white.opacity(0.9))
 												.cornerRadius(4)
 
 											if hop.snr != -32 {
 												Text("\(String(format: "%.1f", hop.snr)) dB")
 													.font(.caption2)
+													.fontWeight(.semibold)
 													.padding(4)
 													.background(getSnrColor(snr: hop.snr).opacity(0.9))
 													.foregroundColor(.white)
@@ -548,13 +588,16 @@ struct TraceRouteMapView: View {
 											VStack(spacing: 2) {
 												Text(hop.name ?? "Node \(hop.num.toHex())")
 													.font(.caption2)
+													.fontWeight(.semibold)
+													.foregroundColor(colorScheme == .dark ? .white : .black)
 													.padding(4)
-													.background(Color.white.opacity(0.9))
+													.background(colorScheme == .dark ? Color.black.opacity(0.8) : Color.white.opacity(0.9))
 													.cornerRadius(4)
 
 												if hop.snr != -32 {
 													Text("\(String(format: "%.1f", hop.snr)) dB")
 														.font(.caption2)
+														.fontWeight(.semibold)
 														.padding(4)
 														.background(getSnrColor(snr: hop.snr).opacity(0.9))
 														.foregroundColor(.white)
@@ -588,6 +631,10 @@ struct TraceRouteMapView: View {
 		}
 		.onAppear {
 			animationPhase = true
+			// Set initial camera position to show all hops
+			if let region = mapRegion {
+				position = .region(region)
+			}
 		}
 	}
 

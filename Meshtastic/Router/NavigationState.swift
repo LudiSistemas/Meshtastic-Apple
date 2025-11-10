@@ -60,6 +60,7 @@ struct NavigationState: Hashable {
 		case connect
 		case nodes
 		case map
+		case signalMapping
 		case settings
 	}
 

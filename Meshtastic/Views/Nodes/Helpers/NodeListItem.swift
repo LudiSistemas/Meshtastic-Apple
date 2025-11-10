@@ -7,10 +7,14 @@
 
 import SwiftUI
 import CoreLocation
+import MapKit
 import Foundation
 
 struct NodeListItem: View {
-	
+
+	// Animation states
+	@State private var pulseAnimation = false
+
 	private var accessibilityDescription: String {
 		var desc = ""
 		if let shortName = node.user?.shortName {
@@ -115,13 +119,36 @@ struct NodeListItem: View {
 		guard let currentLocation = LocationsHandler.shared.locationsArray.last else {
 			return nil
 		}
-		
+
 		let myCoord = CLLocation(latitude: currentLocation.coordinate.latitude, longitude: currentLocation.coordinate.longitude)
-		
+
 		if lastPostion.nodeCoordinate != nil && myCoord.coordinate.longitude != LocationsHandler.DefaultLocation.longitude && myCoord.coordinate.latitude != LocationsHandler.DefaultLocation.latitude {
 			return (lastPostion, myCoord)
 		}
 		return nil
+	}
+
+	// Card gradient based on node status
+	private var cardGradient: LinearGradient {
+		if isDirectlyConnected {
+			return LinearGradient(
+				colors: [Color.green.opacity(0.15), Color.green.opacity(0.05)],
+				startPoint: .topLeading,
+				endPoint: .bottomTrailing
+			)
+		} else if node.isOnline {
+			return LinearGradient(
+				colors: [Color.blue.opacity(0.10), Color.blue.opacity(0.03)],
+				startPoint: .topLeading,
+				endPoint: .bottomTrailing
+			)
+		} else {
+			return LinearGradient(
+				colors: [Color.gray.opacity(0.08), Color.gray.opacity(0.02)],
+				startPoint: .topLeading,
+				endPoint: .bottomTrailing
+			)
+		}
 	}
 	
 	var body: some View {
@@ -244,9 +271,37 @@ struct NodeListItem: View {
 				}
 				.frame(maxWidth: .infinity, alignment: .leading)
 			}
+
+			// Activity Timeline
+			if node.positions?.count ?? 0 > 0 {
+				ActivityTimeline(node: node)
+			}
+
+			// Mini Map Thumbnail
+			if locationData != nil {
+				MiniMapThumbnail(node: node, locationData: locationData)
+			}
+
+			// Quick Stats Panel
+			QuickStatsPanel(node: node, locationData: locationData, modemPreset: modemPreset)
 		}
-		.padding(.top, 4)
-		.padding(.bottom, 4)
+		.padding(12)
+		.background(cardGradient)
+		.cornerRadius(12)
+		.shadow(
+			color: Color.black.opacity(isDirectlyConnected && pulseAnimation ? 0.15 : 0.08),
+			radius: isDirectlyConnected && pulseAnimation ? 8 : 4,
+			x: 0,
+			y: 2
+		)
+		.padding(.horizontal, 8)
+		.padding(.vertical, 4)
+		.animation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true), value: pulseAnimation)
+		.onAppear {
+			if isDirectlyConnected {
+				pulseAnimation = true
+			}
+		}
 		.accessibilityElement(children: .ignore)
 		.accessibilityLabel(accessibilityDescription)
 	}
@@ -290,6 +345,254 @@ struct IconAndText: View {
 				.foregroundColor(textColor)
 				.allowsTightening(true)
 		}
+	}
+}
+
+// MARK: - Mini Map Thumbnail
+struct MiniMapThumbnail: View {
+	let node: NodeInfoEntity
+	let locationData: (PositionEntity, CLLocation)?
+
+	@State private var position: MapCameraPosition = .automatic
+	@State private var isPulsing = false
+
+	var body: some View {
+		if let (lastPosition, myCoord) = locationData,
+		   let nodeCoordinate = lastPosition.nodeCoordinate {
+
+			ZStack(alignment: .topTrailing) {
+				// Mini Map
+				Map(position: $position) {
+					// My location
+					Annotation("You", coordinate: myCoordinate) {
+						Circle()
+							.fill(Color.blue)
+							.frame(width: 10, height: 10)
+							.overlay(
+								Circle()
+									.stroke(Color.white, lineWidth: 2)
+							)
+					}
+					.annotationTitles(.hidden)
+
+					// Node location with pulsing effect
+					Annotation(node.user?.shortName ?? "?", coordinate: nodeCoordinate) {
+						ZStack {
+							// Pulsing ring
+							Circle()
+								.stroke(Color.green, lineWidth: 2)
+								.frame(width: 20, height: 20)
+								.scaleEffect(isPulsing ? 1.5 : 1.0)
+								.opacity(isPulsing ? 0.0 : 0.6)
+								.animation(.easeInOut(duration: 1.5).repeatForever(autoreverses: false), value: isPulsing)
+
+							// Node pin
+							Circle()
+								.fill(Color.green)
+								.frame(width: 12, height: 12)
+								.overlay(
+									Circle()
+										.stroke(Color.white, lineWidth: 2)
+								)
+						}
+					}
+					.annotationTitles(.hidden)
+
+					// Line between locations
+					MapPolyline(coordinates: [myCoordinate, nodeCoordinate])
+						.stroke(Color.blue.opacity(0.5), lineWidth: 2)
+				}
+				.mapStyle(.standard(elevation: .flat))
+				.mapControls {
+					// No controls for thumbnail
+				}
+				.disabled(true) // Make it non-interactive
+				.frame(height: 80)
+				.cornerRadius(8)
+				.onAppear {
+					isPulsing = true
+					// Set camera to show both points
+					let midLat = (myCoordinate.latitude + nodeCoordinate.latitude) / 2
+					let midLon = (myCoordinate.longitude + nodeCoordinate.longitude) / 2
+					let latDelta = abs(myCoordinate.latitude - nodeCoordinate.latitude) * 2.5
+					let lonDelta = abs(myCoordinate.longitude - nodeCoordinate.longitude) * 2.5
+
+					position = .region(MKCoordinateRegion(
+						center: CLLocationCoordinate2D(latitude: midLat, longitude: midLon),
+						span: MKCoordinateSpan(
+							latitudeDelta: max(latDelta, 0.01),
+							longitudeDelta: max(lonDelta, 0.01)
+						)
+					))
+				}
+
+				// Distance badge
+				let nodeCoord = CLLocation(latitude: nodeCoordinate.latitude, longitude: nodeCoordinate.longitude)
+				let metersAway = nodeCoord.distance(from: myCoord)
+				HStack(spacing: 4) {
+					Image(systemName: "location.fill")
+						.font(.caption2)
+					DistanceText(meters: metersAway)
+						.font(.caption2)
+						.fontWeight(.semibold)
+				}
+				.padding(4)
+				.background(Color.black.opacity(0.7))
+				.foregroundColor(.white)
+				.cornerRadius(6)
+				.padding(6)
+			}
+		}
+	}
+
+	private var myCoordinate: CLLocationCoordinate2D {
+		if let myCoord = locationData?.1 {
+			return myCoord.coordinate
+		}
+		return LocationsHandler.DefaultLocation
+	}
+}
+
+// MARK: - Quick Stats Panel
+struct QuickStatsPanel: View {
+	let node: NodeInfoEntity
+	let locationData: (PositionEntity, CLLocation)?
+	let modemPreset: ModemPresets
+
+	var body: some View {
+		HStack(spacing: 16) {
+			// SNR
+			if node.snr != 0 && !node.viaMqtt {
+				VStack(alignment: .center, spacing: 2) {
+					Image(systemName: "waveform")
+						.font(.caption2)
+						.foregroundColor(getSnrColor(snr: node.snr, preset: modemPreset))
+					Text("\(String(format: "%.1f", node.snr))dB")
+						.font(.caption2)
+						.fontWeight(.semibold)
+						.foregroundColor(getSnrColor(snr: node.snr, preset: modemPreset))
+				}
+				.frame(maxWidth: .infinity)
+			}
+
+			// Battery
+			if let battery = node.latestDeviceMetrics?.batteryLevel, battery > 0 {
+				VStack(alignment: .center, spacing: 2) {
+					Image(systemName: battery > 100 ? "bolt.fill" : battery > 75 ? "battery.100" : battery > 50 ? "battery.75" : battery > 25 ? "battery.50" : "battery.25")
+						.font(.caption2)
+						.foregroundColor(battery > 100 ? .green : battery > 25 ? .primary : .red)
+					Text("\(min(battery, 100))%")
+						.font(.caption2)
+						.fontWeight(.semibold)
+				}
+				.frame(maxWidth: .infinity)
+			}
+
+			// Distance
+			if let (lastPosition, myCoord) = locationData {
+				let nodeCoord = CLLocation(latitude: lastPosition.nodeCoordinate!.latitude, longitude: lastPosition.nodeCoordinate!.longitude)
+				let metersAway = nodeCoord.distance(from: myCoord)
+				VStack(alignment: .center, spacing: 2) {
+					Image(systemName: "location.fill")
+						.font(.caption2)
+						.foregroundColor(.blue)
+					DistanceText(meters: metersAway)
+						.font(.caption2)
+						.fontWeight(.semibold)
+				}
+				.frame(maxWidth: .infinity)
+			}
+
+			// Hops
+			if node.hopsAway > 0 {
+				VStack(alignment: .center, spacing: 2) {
+					Image(systemName: "hare.fill")
+						.font(.caption2)
+						.foregroundColor(.orange)
+					Text("\(node.hopsAway) hops")
+						.font(.caption2)
+						.fontWeight(.semibold)
+				}
+				.frame(maxWidth: .infinity)
+			}
+		}
+		.padding(.vertical, 8)
+		.padding(.horizontal, 12)
+		.background(Color.black.opacity(0.03))
+		.cornerRadius(8)
+	}
+}
+
+// MARK: - Activity Timeline Sparkline
+struct ActivityTimeline: View {
+	let node: NodeInfoEntity
+	private let barCount = 24 // 24 hours
+
+	// Get activity data for the last 24 hours
+	private var activityData: [TimeInterval] {
+		var hours: [TimeInterval] = []
+		let now = Date()
+
+		// Get positions in last 24h
+		if let positions = node.positions?.array as? [PositionEntity] {
+			let recentPositions = positions.filter { position in
+				guard let time = position.time else { return false }
+				return now.timeIntervalSince(time) <= 24 * 3600
+			}
+
+			// Group by hour
+			for i in 0..<barCount {
+				let hourStart = now.addingTimeInterval(-Double(i + 1) * 3600)
+				let hourEnd = now.addingTimeInterval(-Double(i) * 3600)
+
+				let count = recentPositions.filter { position in
+					guard let time = position.time else { return false }
+					return time >= hourStart && time < hourEnd
+				}.count
+
+				hours.append(Double(count))
+			}
+		}
+
+		return hours.reversed()
+	}
+
+	private func colorForActivity(value: TimeInterval, maxValue: TimeInterval) -> Color {
+		if maxValue == 0 { return .gray.opacity(0.3) }
+
+		let ratio = value / maxValue
+		if ratio > 0.7 { return .green }
+		if ratio > 0.4 { return .orange }
+		if ratio > 0 { return .yellow }
+		return .gray.opacity(0.3)
+	}
+
+	var body: some View {
+		let maxValue = activityData.max() ?? 1
+
+		HStack(spacing: 2) {
+			Image(systemName: "chart.bar.fill")
+				.font(.caption2)
+				.foregroundColor(.secondary)
+				.frame(width: 20)
+
+			GeometryReader { geometry in
+				HStack(spacing: 1) {
+					ForEach(0..<barCount, id: \.self) { index in
+						let value = index < activityData.count ? activityData[index] : 0
+						let height = maxValue > 0 ? (value / maxValue) * geometry.size.height : 2
+
+						RoundedRectangle(cornerRadius: 1)
+							.fill(colorForActivity(value: value, maxValue: maxValue))
+							.frame(height: max(height, 2))
+							.frame(maxHeight: .infinity, alignment: .bottom)
+					}
+				}
+			}
+			.frame(height: 20)
+		}
+		.padding(.horizontal, 8)
+		.padding(.vertical, 4)
 	}
 }
 

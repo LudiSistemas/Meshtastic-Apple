@@ -51,7 +51,16 @@ struct ContentView: View {
 				}
 				.tag(NavigationState.Tab.map)
 
-			Settings(
+			SignalMapping(
+				router: appState.router,
+				accessoryManager: accessoryManager
+			)
+			.tabItem {
+				Label("Signal Mapping", systemImage: "waveform.path.ecg")
+			}
+			.tag(NavigationState.Tab.signalMapping)
+
+		Settings(
 				router: appState.router
 			)
 			.tabItem {
