@@ -21,22 +21,31 @@ class SignalMappingManager: ObservableObject {
 	private var accessoryManager: AccessoryManager
 	private var probeTimer: Timer?
 	private var storage = SignalMappingStorage.shared
-	private var pendingProbes: [UUID: Date] = [:] // Track sent probes
+	private var pendingProbes: [Int64: Date] = [:] // Track sent probes by messageId
+
+	// Global accessor for ACK handling
+	static weak var shared: SignalMappingManager?
 
 	init(accessoryManager: AccessoryManager) {
 		self.accessoryManager = accessoryManager
+		SignalMappingManager.shared = self
 	}
 
 	// MARK: - Session Control
 
 	/// Start a new mapping session
-	func startSession(name: String, channel: UInt32, targetNodeNum: Int64, probeInterval: TimeInterval = 10.0) {
-		guard !isMapping else { return }
+	func startSession(name: String, targetNodeNum: Int64, targetNodeName: String, probeInterval: TimeInterval = 10.0) {
+		Logger.services.info("[SignalMapping] startSession() called - name=\(name, privacy: .public), targetNode=\(targetNodeNum.toHex(), privacy: .public), targetNodeName=\(targetNodeName, privacy: .public), interval=\(probeInterval, privacy: .public)")
+
+		guard !isMapping else {
+			Logger.services.error("[SignalMapping] startSession() rejected - already mapping")
+			return
+		}
 
 		let session = MappingSession(
 			name: name,
-			channel: channel,
 			targetNodeNum: targetNodeNum,
+			targetNodeName: targetNodeName,
 			probeInterval: probeInterval,
 			isActive: true
 		)
@@ -44,8 +53,9 @@ class SignalMappingManager: ObservableObject {
 		currentSession = session
 		isMapping = true
 
+		Logger.services.info("[SignalMapping] Session created - calling startProbing()")
 		startProbing()
-		Logger.services.info("[SignalMapping] Started session: \(name)")
+		Logger.services.info("[SignalMapping] Started session: \(name, privacy: .public) targeting node: \(targetNodeName, privacy: .public)")
 	}
 
 	/// Stop current mapping session
@@ -80,15 +90,23 @@ class SignalMappingManager: ObservableObject {
 	// MARK: - Probing
 
 	private func startProbing() {
-		guard let session = currentSession else { return }
+		Logger.services.info("[SignalMapping] startProbing() called")
 
+		guard let session = currentSession else {
+			Logger.services.error("[SignalMapping] startProbing() failed - no session")
+			return
+		}
+
+		Logger.services.info("[SignalMapping] Creating timer with interval=\(session.probeInterval, privacy: .public)")
 		probeTimer = Timer.scheduledTimer(withTimeInterval: session.probeInterval, repeats: true) { [weak self] _ in
+			Logger.services.info("[SignalMapping] Timer fired - calling sendProbe()")
 			Task { @MainActor in
 				await self?.sendProbe()
 			}
 		}
 
 		// Send first probe immediately
+		Logger.services.info("[SignalMapping] Sending first probe immediately")
 		Task {
 			await sendProbe()
 		}
@@ -102,49 +120,57 @@ class SignalMappingManager: ObservableObject {
 
 	/// Send a probe message to target node
 	private func sendProbe() async {
+		Logger.services.info("[SignalMapping] sendProbe() called - isMapping=\(self.isMapping, privacy: .public), hasSession=\(self.currentSession != nil, privacy: .public), hasLocation=\(LocationsHandler.shared.locationsArray.last != nil, privacy: .public)")
+
 		guard let session = currentSession,
 			  isMapping,
 			  let location = LocationsHandler.shared.locationsArray.last else {
+			Logger.services.error("[SignalMapping] sendProbe() guard failed - cannot send probe")
 			return
 		}
 
-		let probeId = UUID()
 		let sendTime = Date()
 
-		// Store probe ID and send time
-		pendingProbes[probeId] = sendTime
-
-		// Send minimal probe message (1 character)
+		// Send minimal probe message (1 character) to target node
 		do {
-			try await accessoryManager.sendMessage(
+			let messageId = try await accessoryManager.sendMessage(
 				message: ".", // Minimal payload
 				toUserNum: session.targetNodeNum,
-				channel: Int32(session.channel),
+				channel: 0, // Direct message (channel doesn't matter)
 				isEmoji: false,
 				replyID: 0
 			)
 
-			Logger.services.info("[SignalMapping] Probe sent: \(probeId)")
+			// Store probe messageId and send time
+			pendingProbes[messageId] = sendTime
+
+			Logger.services.info("[SignalMapping] Probe sent to node \(session.targetNodeNum.toHex(), privacy: .public) with messageId: \(messageId, privacy: .public) (hex: \(messageId.toHex(), privacy: .public))")
+			Logger.services.info("[SignalMapping] All pending probes: \(self.pendingProbes.keys.map { "\($0) (\($0.toHex()))" }.joined(separator: ", "), privacy: .public)")
 
 			// Wait for ACK (timeout after 30 seconds)
 			Task {
 				try? await Task.sleep(nanoseconds: 30_000_000_000)
-				handleProbeTimeout(probeId: probeId, location: location)
+				await handleProbeTimeout(messageId: messageId, location: location)
 			}
 
 		} catch {
 			Logger.services.error("[SignalMapping] Failed to send probe: \(error.localizedDescription)")
 
 			// Create failed point
-			addFailedPoint(probeId: probeId, location: location)
+			await addFailedPoint(location: location)
 		}
 	}
 
 	/// Handle probe ACK received
-	func handleProbeACK(probeId: UUID, snr: Float, rssi: Int32) {
-		guard let sendTime = pendingProbes.removeValue(forKey: probeId),
+	func handleProbeACK(messageId: Int64, responderNodeNum: Int64, snr: Float, rssi: Int32) {
+		Logger.services.info("[SignalMapping] handleProbeACK called: msgID=\(messageId, privacy: .public) (\(messageId.toHex(), privacy: .public)) from=\(responderNodeNum.toHex(), privacy: .public) SNR=\(snr, privacy: .public) RSSI=\(rssi, privacy: .public)")
+		Logger.services.info("[SignalMapping] Pending probes: \(self.pendingProbes.keys.map { "\($0) (\($0.toHex()))" }.joined(separator: ", "), privacy: .public)")
+		Logger.services.info("[SignalMapping] Is mapping: \(self.isMapping, privacy: .public), Has session: \(self.currentSession != nil, privacy: .public)")
+
+		guard let sendTime = pendingProbes.removeValue(forKey: messageId),
 			  let location = LocationsHandler.shared.locationsArray.last,
 			  var session = currentSession else {
+			Logger.services.error("[SignalMapping] ACK ignored - messageId=\(messageId, privacy: .public) (\(messageId.toHex(), privacy: .public)) not in pending probes: [\(self.pendingProbes.keys.map { "\($0) (\($0.toHex()))" }.joined(separator: ", "), privacy: .public)]")
 			return
 		}
 
@@ -158,8 +184,8 @@ class SignalMappingManager: ObservableObject {
 			horizontalAccuracy: location.horizontalAccuracy,
 			snr: snr,
 			rssi: rssi,
-			channel: session.channel,
-			targetNodeNum: session.targetNodeNum,
+			channel: 0, // Direct message
+			responderNodeNum: responderNodeNum,
 			responseTime: responseTime,
 			success: true
 		)
@@ -171,20 +197,20 @@ class SignalMappingManager: ObservableObject {
 		currentSNR = snr
 		currentRSSI = rssi
 
-		Logger.services.info("[SignalMapping] Point recorded: SNR=\(snr) RSSI=\(rssi)")
+		Logger.services.info("[SignalMapping] Point recorded from node \(responderNodeNum.toHex()): SNR=\(snr) RSSI=\(rssi)")
 	}
 
-	private func handleProbeTimeout(probeId: UUID, location: CLLocation) {
-		guard pendingProbes[probeId] != nil else {
+	private func handleProbeTimeout(messageId: Int64, location: CLLocation) async {
+		guard pendingProbes[messageId] != nil else {
 			// Already handled (ACK received)
 			return
 		}
 
-		pendingProbes.removeValue(forKey: probeId)
-		addFailedPoint(probeId: probeId, location: location)
+		pendingProbes.removeValue(forKey: messageId)
+		await addFailedPoint(location: location)
 	}
 
-	private func addFailedPoint(probeId: UUID, location: CLLocation) {
+	private func addFailedPoint(location: CLLocation) async {
 		guard var session = currentSession else { return }
 
 		let point = MappingPoint(
@@ -195,8 +221,8 @@ class SignalMappingManager: ObservableObject {
 			horizontalAccuracy: location.horizontalAccuracy,
 			snr: -999, // Indicate no signal
 			rssi: -999,
-			channel: session.channel,
-			targetNodeNum: session.targetNodeNum,
+			channel: 0, // Direct message
+			responderNodeNum: 0, // 0 indicates no responder
 			responseTime: nil,
 			success: false
 		)

@@ -714,6 +714,19 @@ func routingPacket (packet: MeshPacket, connectedNodeNum: Int64, context: NSMana
 					fetchedMessage[0].ackTimestamp = Int32(Date().timeIntervalSince1970)
 				}
 
+				// Signal Mapping hook - notify if mapping is active
+				Logger.services.info("[SignalMapping Debug] Routing ACK received: packet.id=\(packet.id) decoded.requestID=\(packet.decoded.requestID) from=\(packet.from.toHex()) SNR=\(packet.rxSnr) RSSI=\(packet.rxRssi) error=\(routingMessage.errorReason.rawValue)")
+				if routingMessage.errorReason == Routing.Error.none {
+					Task { @MainActor in
+						SignalMappingManager.shared?.handleProbeACK(
+							messageId: Int64(packet.decoded.requestID),
+							responderNodeNum: Int64(packet.from),
+							snr: packet.rxSnr,
+							rssi: packet.rxRssi
+						)
+					}
+				}
+
 				if fetchedMessage[0].toUser != nil {
 					fetchedMessage[0].toUser!.objectWillChange.send()
 				} else {

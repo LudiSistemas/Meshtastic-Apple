@@ -23,13 +23,12 @@ struct SignalMapping: View {
 
 	// Map Configuration
 	@Namespace var mapScope
-	@State private var mapStyle: MapStyle = MapStyle.standard(elevation: .flat, emphasis: .muted, pointsOfInterest: .excludingAll, showsTraffic: false)
-	@State private var position = MapCameraPosition.automatic
+	@State private var mapStyle: MapStyle = MapStyle.standard(elevation: .flat, pointsOfInterest: .excludingAll, showsTraffic: false)
+	@State private var position = MapCameraPosition.userLocation(followsHeading: false, fallback: .automatic)
 
 	// UI State
 	@State private var showingSessionList = false
 	@State private var showingNewSessionSheet = false
-	@State private var selectedChannel: Int32 = 0
 	@State private var selectedNodeNum: Int64 = 0
 	@State private var sessionName: String = ""
 	@State private var probeInterval: TimeInterval = 10.0
@@ -49,7 +48,6 @@ struct SignalMapping: View {
 				MapReader { reader in
 					Map(
 						position: $position,
-						bounds: MapCameraBounds(minimumDistance: 1, maximumDistance: .infinity),
 						scope: mapScope
 					) {
 						// User location
@@ -94,7 +92,6 @@ struct SignalMapping: View {
 				NewSessionSheet(
 					mappingManager: mappingManager,
 					sessionName: $sessionName,
-					selectedChannel: $selectedChannel,
 					selectedNodeNum: $selectedNodeNum,
 					probeInterval: $probeInterval,
 					isPresented: $showingNewSessionSheet
@@ -130,14 +127,9 @@ struct SignalMappingControlPanel: View {
 					VStack(alignment: .leading, spacing: 4) {
 						Text(mappingManager.currentSession?.name ?? "Unknown")
 							.font(.headline)
-						HStack {
-							Label("Ch \(mappingManager.currentSession?.channel ?? 0)", systemImage: "antenna.radiowaves.left.and.right")
-								.font(.caption)
-							Spacer()
-							Text("\(mappingManager.currentSession?.totalPoints ?? 0) points")
-								.font(.caption)
-								.foregroundStyle(.secondary)
-						}
+						Text("\(mappingManager.currentSession?.totalPoints ?? 0) points")
+							.font(.caption)
+							.foregroundStyle(.secondary)
 					}
 
 					Spacer()
@@ -261,36 +253,39 @@ struct SignalPointAnnotation: View {
 
 struct NewSessionSheet: View {
 	@ObservedObject var mappingManager: SignalMappingManager
+	@EnvironmentObject var accessoryManager: AccessoryManager
 	@Binding var sessionName: String
-	@Binding var selectedChannel: Int32
 	@Binding var selectedNodeNum: Int64
 	@Binding var probeInterval: TimeInterval
 	@Binding var isPresented: Bool
 
+	@Environment(\.managedObjectContext) private var context
 	@FetchRequest(
-		sortDescriptors: [NSSortDescriptor(key: "favorite", ascending: false),
-						  NSSortDescriptor(key: "lastHeard", ascending: false)],
-		predicate: NSPredicate(format: "num > 0"),
+		sortDescriptors: [NSSortDescriptor(keyPath: \NodeInfoEntity.lastHeard, ascending: false)],
 		animation: .default)
 	private var nodes: FetchedResults<NodeInfoEntity>
+
+	private var availableNodes: [NodeInfoEntity] {
+		nodes.filter { $0.num != accessoryManager.activeDeviceNum && $0.num > 0 }
+	}
 
 	var body: some View {
 		NavigationStack {
 			Form {
 				Section("Session Details") {
 					TextField("Session Name", text: $sessionName)
+				}
 
-					Picker("Target Node", selection: $selectedNodeNum) {
-						ForEach(nodes.filter { $0.num != 0 }) { node in
-							Text(node.user?.longName ?? "Unknown")
-								.tag(Int64(node.num))
-						}
-					}
-
-					Picker("Channel", selection: $selectedChannel) {
-						ForEach(0..<8) { channel in
-							Text("Channel \(channel)")
-								.tag(Int32(channel))
+				Section("Target Node") {
+					if availableNodes.isEmpty {
+						Text("No nodes available")
+							.foregroundStyle(.secondary)
+					} else {
+						Picker("Node to Ping", selection: $selectedNodeNum) {
+							ForEach(availableNodes, id: \.num) { node in
+								Text(node.user?.longName ?? "Unknown")
+									.tag(Int64(node.num))
+							}
 						}
 					}
 				}
@@ -306,7 +301,7 @@ struct NewSessionSheet: View {
 				}
 
 				Section {
-					Text("Signal mapping will send small probe messages to the target node at the specified interval and record GPS location and signal quality (SNR/RSSI) for each response.")
+					Text("Signal mapping will send probe messages to the selected node at the specified interval. GPS location with signal quality (SNR/RSSI) will be recorded for each response.")
 						.font(.caption)
 						.foregroundStyle(.secondary)
 				}
@@ -321,28 +316,39 @@ struct NewSessionSheet: View {
 				}
 				ToolbarItem(placement: .confirmationAction) {
 					Button("Start") {
+						Logger.services.info("[SignalMapping UI] Start button pressed - sessionName=\(sessionName, privacy: .public), isEmpty=\(sessionName.isEmpty, privacy: .public)")
 						startSession()
 					}
-					.disabled(sessionName.isEmpty || selectedNodeNum == 0)
+					.disabled(sessionName.isEmpty || selectedNodeNum == 0 || availableNodes.isEmpty)
 				}
 			}
 			.onAppear {
 				// Set defaults
+				Logger.services.info("[SignalMapping UI] NewSessionSheet onAppear - setting default session name")
 				sessionName = "Session \(Date().formatted(date: .abbreviated, time: .shortened))"
-				if selectedNodeNum == 0, let firstNode = nodes.first {
+				Logger.services.info("[SignalMapping UI] NewSessionSheet onAppear - sessionName set to: \(sessionName, privacy: .public)")
+				// Set first available node as default
+				if let firstNode = availableNodes.first {
 					selectedNodeNum = Int64(firstNode.num)
+					Logger.services.info("[SignalMapping UI] Selected first node: \(firstNode.user?.longName ?? "Unknown") (\(selectedNodeNum.toHex(), privacy: .public))")
 				}
 			}
 		}
 	}
 
 	private func startSession() {
+		// Find the selected node to get its name
+		let selectedNode = availableNodes.first { Int64($0.num) == selectedNodeNum }
+		let nodeName = selectedNode?.user?.longName ?? "Unknown Node"
+
+		Logger.services.info("[SignalMapping UI] startSession() called in UI - name=\(sessionName, privacy: .public), targetNode=\(selectedNodeNum.toHex(), privacy: .public), targetNodeName=\(nodeName, privacy: .public)")
 		mappingManager.startSession(
 			name: sessionName,
-			channel: UInt32(selectedChannel),
 			targetNodeNum: selectedNodeNum,
+			targetNodeName: nodeName,
 			probeInterval: probeInterval
 		)
+		Logger.services.info("[SignalMapping UI] Called mappingManager.startSession()")
 		isPresented = false
 	}
 }
@@ -449,10 +455,6 @@ struct SessionRow: View {
 			}
 
 			HStack {
-				Label("Ch \(session.channel)", systemImage: "antenna.radiowaves.left.and.right")
-					.font(.caption)
-				Text("•")
-					.foregroundStyle(.secondary)
 				Text("\(session.totalPoints) points")
 					.font(.caption)
 				Text("•")

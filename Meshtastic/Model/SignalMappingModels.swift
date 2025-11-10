@@ -21,7 +21,7 @@ struct MappingPoint: Codable, Identifiable, Hashable {
 	let snr: Float
 	let rssi: Int32
 	let channel: UInt32
-	let targetNodeNum: Int64
+	let responderNodeNum: Int64 // Which node responded
 	let responseTime: TimeInterval? // Time to receive ACK
 	let success: Bool // Whether ACK was received
 
@@ -35,7 +35,7 @@ struct MappingPoint: Codable, Identifiable, Hashable {
 		snr: Float,
 		rssi: Int32,
 		channel: UInt32,
-		targetNodeNum: Int64,
+		responderNodeNum: Int64,
 		responseTime: TimeInterval? = nil,
 		success: Bool
 	) {
@@ -48,7 +48,7 @@ struct MappingPoint: Codable, Identifiable, Hashable {
 		self.snr = snr
 		self.rssi = rssi
 		self.channel = channel
-		self.targetNodeNum = targetNodeNum
+		self.responderNodeNum = responderNodeNum
 		self.responseTime = responseTime
 		self.success = success
 	}
@@ -76,8 +76,8 @@ struct MappingSession: Codable, Identifiable, Hashable {
 	let name: String
 	let createdDate: Date
 	var lastUpdated: Date
-	let channel: UInt32
-	let targetNodeNum: Int64
+	let targetNodeNum: Int64 // Node to ping for signal testing
+	let targetNodeName: String // Name of target node for logging
 	var points: [MappingPoint]
 	var probeInterval: TimeInterval // Seconds between probes
 	var isActive: Bool
@@ -87,8 +87,8 @@ struct MappingSession: Codable, Identifiable, Hashable {
 		name: String,
 		createdDate: Date = Date(),
 		lastUpdated: Date = Date(),
-		channel: UInt32,
 		targetNodeNum: Int64,
+		targetNodeName: String,
 		points: [MappingPoint] = [],
 		probeInterval: TimeInterval = 10.0,
 		isActive: Bool = false
@@ -97,8 +97,8 @@ struct MappingSession: Codable, Identifiable, Hashable {
 		self.name = name
 		self.createdDate = createdDate
 		self.lastUpdated = lastUpdated
-		self.channel = channel
 		self.targetNodeNum = targetNodeNum
+		self.targetNodeName = targetNodeName
 		self.points = points
 		self.probeInterval = probeInterval
 		self.isActive = isActive
