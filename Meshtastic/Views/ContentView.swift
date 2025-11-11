@@ -45,18 +45,12 @@ struct ContentView: View {
 			}
 			.tag(NavigationState.Tab.nodes)
 
-			MeshMap(router: appState.router)
-				.tabItem {
-					Label("Mesh Map", systemImage: "map")
-				}
-				.tag(NavigationState.Tab.map)
-
 			SignalMapping(
 				router: appState.router,
 				accessoryManager: accessoryManager
 			)
 			.tabItem {
-				Label("Signal Mapping", systemImage: "waveform.path.ecg")
+				Label("RF Map", systemImage: "waveform.path.ecg")
 			}
 			.tag(NavigationState.Tab.signalMapping)
 
