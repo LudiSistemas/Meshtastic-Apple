@@ -267,7 +267,7 @@ extension AccessoryManager {
 		try await sendAdminMessageToRadio(meshPacket: meshPacket, adminDescription: messageDescription)
 	}
 
-	public func sendMessage(message: String, toUserNum: Int64, channel: Int32, isEmoji: Bool, replyID: Int64) async throws {
+	public func sendMessage(message: String, toUserNum: Int64, channel: Int32, isEmoji: Bool, replyID: Int64) async throws -> Int64 {
 		guard let fromUserNum = self.activeConnection?.device.num else {
 			Logger.services.error("Error while sending CannedMessageModule request.  No active device.")
 			throw AccessoryError.ioFailed("No active device")
@@ -276,7 +276,7 @@ extension AccessoryManager {
 		guard message.count > 0 else {
 			// Don't send an empty message
 			Logger.mesh.info("🚫 Don't Send an Empty Message")
-			return
+			return 0
 		}
 
 			let messageUsers = UserEntity.fetchRequest()
@@ -375,7 +375,7 @@ extension AccessoryManager {
 					do {
 						try context.save()
 						Logger.data.info("💾 Saved a new sent message from \(self.activeDeviceNum?.toHex() ?? "0", privacy: .public) to \(toUserNum.toHex(), privacy: .public)")
-
+						return newMessage.messageId
 					} catch {
 						context.rollback()
 						let nsError = error as NSError
@@ -386,7 +386,7 @@ extension AccessoryManager {
 			} catch {
 				Logger.data.error("💥 Send message failure \(self.activeDeviceNum?.toHex() ?? "0", privacy: .public) to \(toUserNum.toHex(), privacy: .public)")
 			}
-
+		return 0
 	}
 
 	public func setFavoriteNode(node: NodeInfoEntity, connectedNodeNum: Int64) async throws {

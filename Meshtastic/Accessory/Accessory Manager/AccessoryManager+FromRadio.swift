@@ -9,6 +9,7 @@ import Foundation
 import MeshtasticProtobufs
 import CocoaMQTT
 import OSLog
+import UserNotifications
 
 extension AccessoryManager {
 
@@ -351,6 +352,27 @@ extension AccessoryManager {
 
 		if let routingMessage = try? RouteDiscovery(serializedBytes: packet.decoded.payload) {
 			let traceRoute = getTraceRoute(id: Int64(packet.decoded.requestID), context: context)
+
+			// Check if this is an incoming traceroute request (not our own request)
+			if traceRoute == nil && packet.from != deviceNum {
+				// Someone sent us a traceroute request
+				if let senderNode = getNodeInfo(id: Int64(packet.from), context: context) {
+					let manager = LocalNotificationManager()
+					manager.notifications = [
+						Notification(
+							id: (UUID().uuidString),
+							title: "Traceroute Request Received",
+							subtitle: "From \(senderNode.user?.longName ?? "Unknown")",
+							content: "\(senderNode.user?.longName ?? "Unknown") sent you a traceroute request with \(routingMessage.route.count) hops",
+							target: "nodes",
+							path: "meshtastic:///nodes?nodenum=\(packet.from)"
+						)
+					]
+					manager.schedule()
+					Logger.mesh.info("🪧 Received traceroute request from \(senderNode.user?.longName ?? "Unknown")")
+				}
+			}
+
 			traceRoute?.response = true
 			guard let connectedNode = getNodeInfo(id: Int64(deviceNum), context: context) else {
 				return

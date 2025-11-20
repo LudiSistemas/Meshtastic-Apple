@@ -34,29 +34,145 @@ struct TraceRouteLog: View {
 	var body: some View {
 		HStack(alignment: .top) {
 			VStack {
+				// Statistics Header
+				if let routes = node.traceRoutes?.array as? [TraceRouteEntity], !routes.isEmpty {
+					VStack(spacing: 8) {
+						Text("Statistics")
+							.font(.headline)
+							.frame(maxWidth: .infinity, alignment: .leading)
+							.padding(.horizontal)
+							.padding(.top, 8)
+
+						let successfulRoutes = routes.filter { $0.response }
+						let successCount = routes.filter { $0.response }.count
+						let totalSent = routes.filter { $0.sent }.count
+						let successRate = totalSent > 0 ? (Double(successCount) / Double(totalSent)) * 100 : 0
+						let avgHops = successfulRoutes.isEmpty ? 0 : Double(successfulRoutes.reduce(0) { $0 + $1.hopsTowards }) / Double(successfulRoutes.count)
+						let allHops = successfulRoutes.flatMap { ($0.hops?.array as? [TraceRouteHopEntity]) ?? [] }
+						let avgSnr = allHops.isEmpty ? 0 : Double(allHops.reduce(0.0) { $0 + Double($1.snr) }) / Double(allHops.count)
+
+						HStack(spacing: 16) {
+							// Success Rate
+							VStack(alignment: .leading, spacing: 2) {
+								Text("Success Rate")
+									.font(.caption2)
+									.foregroundStyle(.secondary)
+								Text("\(Int(successRate))%")
+									.font(.title3)
+									.fontWeight(.semibold)
+									.foregroundStyle(successRate >= 80 ? .green : (successRate >= 50 ? .orange : .red))
+							}
+
+							Divider()
+								.frame(height: 40)
+
+							// Average Hops
+							VStack(alignment: .leading, spacing: 2) {
+								Text("Avg Hops")
+									.font(.caption2)
+									.foregroundStyle(.secondary)
+								Text(String(format: "%.1f", avgHops))
+									.font(.title3)
+									.fontWeight(.semibold)
+							}
+
+							Divider()
+								.frame(height: 40)
+
+							// Average SNR
+							VStack(alignment: .leading, spacing: 2) {
+								Text("Avg SNR")
+									.font(.caption2)
+									.foregroundStyle(.secondary)
+								Text(String(format: "%.1f dB", avgSnr))
+									.font(.title3)
+									.fontWeight(.semibold)
+									.foregroundStyle(avgSnr >= 5 ? .green : (avgSnr >= 0 ? .orange : .red))
+							}
+
+							Spacer()
+						}
+						.padding(.horizontal)
+						.padding(.bottom, 8)
+					}
+					.background(Color(.systemGray6))
+					.cornerRadius(8)
+					.padding(.horizontal, 8)
+					.padding(.top, 8)
+				}
+
 				VStack {
 					List(node.traceRoutes?.reversed() as? [TraceRouteEntity] ?? [], id: \.self, selection: $selectedRoute) { route in
-						Label {
-							let routeTime = route.time?.formatted() ?? "Unknown".localized
-							if route.response && route.hopsTowards == route.hopsBack {
-								let hopString = String(localized: "\(route.hopsTowards) Hops")
-								Text("\(routeTime) - \(hopString)")
-									.font(.caption)
-							} else if route.response {
-								let hopTowardsString = String(localized: "\(route.hopsTowards) Hops")
-								let hopBackString = route.hopsBack >= 0 ? String(localized: "\(route.hopsBack) Hops") : String(localized: "Unknown")
-								Text("\(routeTime) - \(hopTowardsString) Towards  \(hopBackString) Back")
-									.font(.caption)
-							} else if route.sent {
-								Text("\(routeTime) - No Response")
-									.font(.caption)
-							} else {
-								Text("\(routeTime) - Not Sent")
-									.font(.caption)
+						HStack {
+							Label {
+								VStack(alignment: .leading, spacing: 4) {
+									// Main route info
+									if route.response && route.hopsTowards == route.hopsBack {
+										let hopString = String(localized: "\(route.hopsTowards) Hops")
+										Text(hopString)
+											.font(.body)
+											.fontWeight(.semibold)
+									} else if route.response {
+										let hopTowardsString = String(localized: "\(route.hopsTowards) → \(route.hopsBack) Hops")
+										Text(hopTowardsString)
+											.font(.body)
+											.fontWeight(.semibold)
+									} else if route.sent {
+										Text("Waiting for response...")
+											.font(.body)
+											.foregroundStyle(.orange)
+									} else {
+										Text("Not Sent")
+											.font(.body)
+											.foregroundStyle(.red)
+									}
+
+									// Time information
+									HStack(spacing: 8) {
+										if let sentTime = route.time {
+											Text(sentTime.formatted(date: .omitted, time: .shortened))
+												.font(.caption2)
+												.foregroundStyle(.secondary)
+										}
+
+										// Duration if response received
+										if route.response, let responseHop = (route.hops?.array as? [TraceRouteHopEntity])?.first, let responseTime = responseHop.time, let sentTime = route.time {
+											let duration = responseTime.timeIntervalSince(sentTime)
+											Text("• \(String(format: "%.1fs", duration))")
+												.font(.caption2)
+												.foregroundStyle(.secondary)
+										}
+									}
+								}
+							} icon: {
+								ZStack {
+									if route.response {
+										Image(systemName: route.hopsTowards == 0 && route.response ? "person.line.dotted.person" : "point.3.connected.trianglepath.dotted")
+											.symbolRenderingMode(.hierarchical)
+											.foregroundStyle(.green)
+									} else if route.sent {
+										Image(systemName: "signpost.right.and.left")
+											.symbolRenderingMode(.hierarchical)
+											.foregroundStyle(.orange)
+									} else {
+										Image(systemName: "person.slash")
+											.symbolRenderingMode(.hierarchical)
+											.foregroundStyle(.red)
+									}
+								}
 							}
-						} icon: {
-							Image(systemName: route.response ? (route.hopsTowards == 0 && route.response ? "person.line.dotted.person" : "point.3.connected.trianglepath.dotted") : "person.slash")
-								.symbolRenderingMode(.hierarchical)
+
+							Spacer()
+
+							// Status badge
+							if route.response {
+								Image(systemName: "checkmark.circle.fill")
+									.foregroundStyle(.green)
+									.font(.title3)
+							} else if route.sent {
+								ProgressView()
+									.scaleEffect(0.8)
+							}
 						}
 						.swipeActions {
 							Button(role: .destructive) {
@@ -122,6 +238,12 @@ struct TraceRouteLog: View {
 									   .symbolRenderingMode(.hierarchical)
 							   }
 						}
+
+						// Show map if we have positions
+						if selectedRoute?.hasPositions ?? false {
+							TraceRouteMapView(traceRoute: selectedRoute!)
+						}
+
 						if false {// selectedRoute?.hops?.count ?? 0 >= 3 {
 							HStack(alignment: .center) {
 								GeometryReader { geometry in
@@ -286,4 +408,246 @@ func getTraceRouteHops(context: NSManagedObjectContext) -> [TraceRouteHopEntity]
 	array.append(trh7)
 	array.append(trh8)
 	return array
+}
+
+// MARK: - Trace Route Map View
+struct TraceRouteMapView: View {
+	let traceRoute: TraceRouteEntity
+
+	@Namespace var mapScope
+	@State private var mapStyle: MapStyle = MapStyle.standard(elevation: .realistic, emphasis: MapStyle.StandardEmphasis.muted, pointsOfInterest: .all, showsTraffic: false)
+	@State private var position = MapCameraPosition.automatic
+	@State private var animationPhase = false
+	@Environment(\.colorScheme) var colorScheme
+
+	// Computed property to get all coordinates for map bounds
+	private var allCoordinates: [CLLocationCoordinate2D] {
+		guard let hops = traceRoute.hops?.array as? [TraceRouteHopEntity] else { return [] }
+		return hops.compactMap { $0.coordinate }
+	}
+
+	// Calculate region that encompasses all hops
+	private var mapRegion: MKCoordinateRegion? {
+		let coords = allCoordinates
+		guard !coords.isEmpty else { return nil }
+
+		var minLat = coords[0].latitude
+		var maxLat = coords[0].latitude
+		var minLon = coords[0].longitude
+		var maxLon = coords[0].longitude
+
+		for coord in coords {
+			minLat = min(minLat, coord.latitude)
+			maxLat = max(maxLat, coord.latitude)
+			minLon = min(minLon, coord.longitude)
+			maxLon = max(maxLon, coord.longitude)
+		}
+
+		let center = CLLocationCoordinate2D(
+			latitude: (minLat + maxLat) / 2,
+			longitude: (minLon + maxLon) / 2
+		)
+
+		let span = MKCoordinateSpan(
+			latitudeDelta: max((maxLat - minLat) * 1.5, 0.01), // Add 50% padding
+			longitudeDelta: max((maxLon - minLon) * 1.5, 0.01)
+		)
+
+		return MKCoordinateRegion(center: center, span: span)
+	}
+
+	var body: some View {
+		VStack {
+			if traceRoute.hasPositions {
+				Map(position: $position, bounds: MapCameraBounds(minimumDistance: 100, maximumDistance: .infinity), scope: mapScope) {
+
+					if let hops = traceRoute.hops?.array as? [TraceRouteHopEntity] {
+						let towardsHops = hops.filter { $0.back == false }
+						let backHops = hops.filter { $0.back == true }
+
+						// Draw "towards" route (green) with dashed red for unknown hops
+						let towardsCoords = towardsHops.compactMap { $0.coordinate }
+						ForEach(0..<towardsHops.count, id: \.self) { index in
+							if let coord = towardsHops[index].coordinate, index > 0 {
+								if let prevCoord = towardsHops[0..<index].last(where: { $0.coordinate != nil })?.coordinate {
+									// Check if there's a gap in indices (unknown hop)
+									let prevIndex = towardsHops[0..<index].lastIndex(where: { $0.coordinate != nil }) ?? 0
+									if index - prevIndex > 1 {
+										// Dashed red line for unknown hops
+										let dashedStyle = StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round, dash: [8, 4])
+										MapPolyline(coordinates: [prevCoord, coord])
+											.stroke(.red, style: dashedStyle)
+									} else {
+										// Solid green line
+										MapPolyline(coordinates: [prevCoord, coord])
+											.stroke(.green, lineWidth: 3)
+									}
+								}
+							}
+						}
+
+						// Draw "back" route (blue) with dashed red for unknown hops
+						if !backHops.isEmpty {
+							ForEach(0..<backHops.count, id: \.self) { index in
+								if let coord = backHops[index].coordinate, index > 0 {
+									if let prevCoord = backHops[0..<index].last(where: { $0.coordinate != nil })?.coordinate {
+										let prevIndex = backHops[0..<index].lastIndex(where: { $0.coordinate != nil }) ?? 0
+										if index - prevIndex > 1 {
+											// Dashed red line for unknown hops
+											let dashedStyle = StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round, dash: [8, 4])
+											MapPolyline(coordinates: [prevCoord, coord])
+												.stroke(.red, style: dashedStyle)
+										} else {
+											// Solid blue line
+											MapPolyline(coordinates: [prevCoord, coord])
+												.stroke(.blue, lineWidth: 3)
+										}
+									}
+								}
+							}
+						}
+
+						// Draw markers for towards hops
+						ForEach(Array(towardsHops.enumerated()), id: \.offset) { index, hop in
+							if let coord = hop.coordinate {
+								Annotation(hop.name ?? "Node \(hop.num.toHex())", coordinate: coord) {
+									VStack {
+										ZStack {
+											// Pulsing ring animation
+											Circle()
+												.stroke(getSnrColor(snr: hop.snr), lineWidth: 3)
+												.frame(width: 30, height: 30)
+												.scaleEffect(animationPhase ? 1.5 : 1.0)
+												.opacity(animationPhase ? 0.0 : 0.6)
+												.animation(
+													.easeInOut(duration: 1.5)
+													.repeatForever(autoreverses: false)
+													.delay(Double(index) * 0.3),
+													value: animationPhase
+												)
+
+											Circle()
+												.fill(getSnrColor(snr: hop.snr))
+												.strokeBorder(.white, lineWidth: 2)
+												.frame(width: 30, height: 30)
+
+											Text("\(index + 1)")
+												.font(.caption2)
+												.fontWeight(.bold)
+												.foregroundColor(.white)
+										}
+
+										VStack(spacing: 2) {
+											Text(hop.name ?? "Node \(hop.num.toHex())")
+												.font(.caption2)
+												.fontWeight(.semibold)
+												.foregroundColor(colorScheme == .dark ? .white : .black)
+												.padding(4)
+												.background(colorScheme == .dark ? Color.black.opacity(0.8) : Color.white.opacity(0.9))
+												.cornerRadius(4)
+
+											if hop.snr != -32 {
+												Text("\(String(format: "%.1f", hop.snr)) dB")
+													.font(.caption2)
+													.fontWeight(.semibold)
+													.padding(4)
+													.background(getSnrColor(snr: hop.snr).opacity(0.9))
+													.foregroundColor(.white)
+													.cornerRadius(4)
+											}
+										}
+									}
+								}
+								.annotationTitles(.hidden)
+							}
+						}
+
+						// Draw markers for back hops (if different from towards)
+						ForEach(Array(backHops.enumerated()), id: \.offset) { index, hop in
+							if let coord = hop.coordinate {
+								// Only show if not already shown in towards
+								let alreadyShown = towardsHops.contains(where: {
+									$0.coordinate?.latitude == coord.latitude &&
+									$0.coordinate?.longitude == coord.longitude
+								})
+								if !alreadyShown {
+									Annotation(hop.name ?? "Node \(hop.num.toHex())", coordinate: coord) {
+										VStack {
+											ZStack {
+												Circle()
+													.fill(getSnrColor(snr: hop.snr))
+													.strokeBorder(.blue, lineWidth: 2)
+													.frame(width: 30, height: 30)
+
+												Text("B\(index + 1)")
+													.font(.caption2)
+													.fontWeight(.bold)
+													.foregroundColor(.white)
+											}
+
+											VStack(spacing: 2) {
+												Text(hop.name ?? "Node \(hop.num.toHex())")
+													.font(.caption2)
+													.fontWeight(.semibold)
+													.foregroundColor(colorScheme == .dark ? .white : .black)
+													.padding(4)
+													.background(colorScheme == .dark ? Color.black.opacity(0.8) : Color.white.opacity(0.9))
+													.cornerRadius(4)
+
+												if hop.snr != -32 {
+													Text("\(String(format: "%.1f", hop.snr)) dB")
+														.font(.caption2)
+														.fontWeight(.semibold)
+														.padding(4)
+														.background(getSnrColor(snr: hop.snr).opacity(0.9))
+														.foregroundColor(.white)
+														.cornerRadius(4)
+												}
+											}
+										}
+									}
+									.annotationTitles(.hidden)
+								}
+							}
+						}
+					}
+				}
+				.mapStyle(mapStyle)
+				.mapControls {
+					MapUserLocationButton()
+					MapCompass()
+					MapScaleView()
+				}
+				.frame(height: 400)
+				.cornerRadius(12)
+				.padding()
+			} else {
+				ContentUnavailableView(
+					"No Position Data",
+					systemImage: "map.fill",
+					description: Text("Nodes in this trace route don't have known positions")
+				)
+			}
+		}
+		.onAppear {
+			animationPhase = true
+			// Set initial camera position to show all hops
+			if let region = mapRegion {
+				position = .region(region)
+			}
+		}
+	}
+
+	private func getSnrColor(snr: Float) -> Color {
+		// SNR color coding based on signal quality
+		if snr >= 10 {
+			return .green
+		} else if snr >= 5 {
+			return .blue
+		} else if snr >= 0 {
+			return .orange
+		} else {
+			return .red
+		}
+	}
 }
